@@ -50,7 +50,7 @@ class Process_Manager:
         '''
             Starts a process.
             
-            @param process: A function that the Process Data as its only parameter.  
+            @param process: A callable that the Process Data as its only parameter.  
             The Process Data holds information like the process state and when it
             was last run. A process is called periodically if it is running. A
             process also called when it enters other states like STARTED or FINISHED.
@@ -82,6 +82,27 @@ class Process_Manager:
         # call the process
         self._call_process(process)
 
+
+    def start_sequence(self, processes, group = None, group_default = False):
+        ''' 
+            Creates a sequence of processes. If a group is given then each process
+            in belongs to that group.
+            
+            @param processes: A list of processes that will be run in sequence.
+            @param group: A string representing a group of processes. No two processes
+            in a group can be running at the same time.
+        '''
+        
+        if len(processes) is 0:
+            return
+        
+        first_process = processes.pop(0)
+        
+        # Don't add the children if the process wasn't added
+        if self.start(first_process, group, group_default):
+            self.processes[first_process].children = processes
+        
+
         
     def finish(self, process, call = True):
         '''
@@ -109,26 +130,6 @@ class Process_Manager:
                 self._set_group_process(group_default)
         
         return True
-        
-    
-    def start_sequence(self, processes, group = None, group_default = False):
-        ''' 
-            Creates a sequence of processes. If a group is given then each process
-            in belongs to that group.
-            
-            @param processes: A list of processes that will be run in sequence.
-            @param group: A string representing a group of processes. No two processes
-            in a group can be running at the same time.
-        '''
-        
-        if len(processes) is 0:
-            return
-        
-        first_process = processes.pop(0)
-        
-        # Don't add the children if the process wasn't added
-        if self.start(first_process, group, group_default):
-            self.processes[first_process].children = processes
         
     
     def _get_group_default(self, group):

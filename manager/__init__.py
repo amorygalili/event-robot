@@ -1,6 +1,5 @@
 from .event_manager import Event_Manager as EM
 from .process_manager import Process_Manager as PM
-from .process import Process
 from wpilib import IterativeRobot
 
 Event_Manager = EM()

@@ -3,6 +3,7 @@ from manager import *
 class Joystick_Button(Process):
     
     def __init__(self, joystick, button):
+        
         super().__init__()
         self.joystick = joystick
         self.button = button
@@ -19,27 +20,8 @@ class Joystick_Button(Process):
         
     def get_button(self):
         return self.joystick.getRawButton(self.button)
-        
-    def on_start(self):
-        self.current_state = self.get_button()
-        
-    def run(self, elapsed_time):
-        
-        prev_state = self.current_state
-        self.current_state = self.get_button()
-        
-        if self.current_state:
-            self.notify_listeners('while_pressed')
-        else:
-            self.notify_listeners('while_released')
-            
-        if prev_state is not self.current_state:
-            if self.current_state:
-                self.notify_listeners('when_pressed')
-            else:
-                self.notify_listeners('when_released')
-            
-        
+
+
     def notify_listeners(self, type):
         for listener in self.event_listeners[type]:
             listener()
@@ -58,4 +40,32 @@ class Joystick_Button(Process):
         
     def while_released(self, listener):
         self.add_listener('while_released', listener)
+        
+        
+    def __call__(self, process):
+
+        # Process has started
+        if process.state is Process_Manager.STARTED:
+            self.current_state = self.get_button()
+            return
+        
+        # Do nothing if process isn't being started or run
+        elif  process.state is not Process_Manager.RUNNING:
+            return
+
+        # Process is running
+        prev_state = self.current_state
+        self.current_state = self.get_button()
+        
+        if self.current_state:
+            self.notify_listeners('while_pressed')
+        else:
+            self.notify_listeners('while_released')
+            
+        if prev_state is not self.current_state:
+            if self.current_state:
+                self.notify_listeners('when_pressed')
+            else:
+                self.notify_listeners('when_released')
+            
         
