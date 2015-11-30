@@ -42,11 +42,25 @@ class Process_Manager:
     RUNNING = 5
     
     def __init__(self):
-        self.processes = {}
+        self.process_groups = {}
+        self.single_processes = {}
         self._time_of_last_run = None
+
+
+    def add_group(self, name, default_process = None):
+
+            process_data = Process_Data(default_process, name, True) if default_process else None
+
+            self.process_groups = {
+                default_process : process_data,
+                current_process : None
+            }
+
+            # call the process
+            self._call_process(process_data)
     
     
-    def start(self, process, group = None, group_default = False):
+    def start(self, process, group = None):
         '''
             Starts a process.
             
@@ -58,32 +72,35 @@ class Process_Manager:
             one process can be running in a group at any point in time. The currently
             running process will be either INTERRUPTED if it is the group default or
             FINISHED if it isn't when this process starts.
-            @param group_default: When the currently running process is finished then
-            the INTERRUPTED group default process will be RESUMED.
-            
         '''
+
+        process_data = Process_Data(process, group, group_default)
         
-        # Only add the process if it hasn't been added
-        if process in self.processes:
+        if group is None:
+            self.single_processes[process] = process_data
+            self._call_process(process_data)
+
+        elif group in self.process_groups:
+
+            process_group = self.process_groups[group]
+
+            if process_group['current_process']:
+                process_group['current_process'].state = Process_Manager.FINISHED
+                self._call_process(process_group['current_process'])
+
+            process_group['current_process'] = process_data
+
+            if process_group['default_process'] and process_group['default_process'].state is not Process_Manager.INTERRUPTED:
+                process_group['default_process'].state = Process_Manager.INTERRUPTED
+                self._call_process(process_group['default_process'])
+
+        else:
             return False
-        
-        self.processes[process] = Process_Data(process, group, group_default)       
-        
-        # If this process is the default remove the current default
-        if group is not None and group_default is True:
-            for proc in self.processes.values():
-                if proc.group is group and proc.group_default is True:
-                    self.finish(proc)
-                    break
-        
-        # Gives group control to this process
-        self._set_group_process(process)
-        
-        # call the process
-        self._call_process(process)
 
+        self._call_process(process_data)
+        return True
 
-    def start_sequence(self, processes, group = None, group_default = False):
+    def start_sequence(self, processes, group = None):
         ''' 
             Creates a sequence of processes. If a group is given then each process
             in belongs to that group.
@@ -92,95 +109,83 @@ class Process_Manager:
             @param group: A string representing a group of processes. No two processes
             in a group can be running at the same time.
         '''
-        
+         
         if len(processes) is 0:
             return
         
         first_process = processes.pop(0)
         
         # Don't add the children if the process wasn't added
-        if self.start(first_process, group, group_default):
-            self.processes[first_process].children = processes
+        if self.start(first_process, group):
+
+            process_data = None
+
+            if group in self.process_groups:
+                process_data = self.process_groups[group]['current_process']
+            else:
+                process_data = self.single_processes[first_process]
+
+            process_data.children = processes
         
 
         
-    def finish(self, process, call = True):
+    def finish(self, process = None, group = None):
         '''
-            Ends a process. The process is removed and control is given back to its
-            group's default.
+            Ends the currently running process 
             
-            @param process: The process that is finished.
-            @param call: Calls the process with the FINISHED state if True
+            @param process:
+            @param group:
         '''
         
-        # The process is now FINISHED. Get process data and remove the process
-        process_data = self._get_process_data(process)
-        del self.processes[process]
+        if process in self.single_processes:
+            process_data = self.single_processes[process]
+            process_data.state = Process_Manager.FINISHED
+            self._call_process(process_data)
+            del self.single_processes[process_data]
+            self.start_sequence(process_data.children, None)
+
+        elif group in self.process_groups:
+            process_group = self.process_groups[group]
+            process_data = process_group['current_process']
+            if process_data:
+                if process_data.children and len(process_data.children) > 0:
+                    self.start_sequence(process_data.children, group)
+                else:
+                    process_data.state = Process_Manager.FINISHED
+                    self._call_process(process_data)
+                    process_group['current_process'] = None
+                    default_process_data = process_group['default_process']
+                    if default_process_data:
+                        default_process_data.state = Process_Manager.RESUMED
+                        self._call_process(default_process_data)
         
-        # Alert the process that it has stopped
-        if call: self._call_process(process)
-        
-        # Add the children of the process as a sequence
-        self.start_sequence(process_data.children, process_data.group, process_data.group_default)
-        
-        # Give control back to the group default
-        if process_data.group_default is False or len(process_data.children) is 0:
-            group_default = self._get_group_default(process_data.group)
-            if group_default:
-                self._set_group_process(group_default)
-        
-        return True
         
     
     def _get_group_default(self, group):
         
-        if group:
-            for proc, proc_data in self.processes.items():
-                if proc_data.group is group and proc_data.group_default is True:
-                    return proc
+        if group in self.group_processes:
+            return self.group_processes[group]['default_process']
                 
         return None
         
-                
-        
-    def _set_group_process(self, process):
-        ''' 
-            Start or resume a process and interrupt all other processes in the group.
-        '''
-        
-        process_data = self._get_process_data(process)
-
-        if process_data.state is Process_Manager.INTERRUPTED:
-            process_data.state = Process_Manager.RESUMED
-            
-         # Interrupt all the other processes in the group
-        if process_data.group is not None:
-            for proc, data in self.processes.items():
-                if proc is process or proc.group is not process[group]:
-                    continue
-                
-                proc.state = Process_Manager.INTERRUPTED
-            
     
-    def _call_process(self, process):
-        
-        process_data = self._get_process_data(process)    
-        process(process_data)
+    
+    def _call_process(self, process_data):
+        if process_data:
+            process_data.process(process_data)
                        
     def get_current_time(self):
         return (datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)).total_seconds()  
                 
-    def time_since_last_run(self, process):
-        
-        process_data = self._get_process_data(process)
-        if process_data is None:
+    def time_since_last_run(self, process_data):
+
+        if process_data is None or process_data.last_run_time is None:
             return None
         
-        return None if last_run is None else self.get_current_time() - process_data.last_run_time
+        return self.get_current_time() - process_data.last_run_time
     
-    def time_since_start(self, process):
+    def time_since_start(self, process_data):
         
-        process_data = self._get_process_data(process)
         if process_data is None:
             return None
         
@@ -190,17 +195,23 @@ class Process_Manager:
         '''
             Executes each running process
         '''
-        
+
+        # Run group processes
+        for group in self.group_processes.values():
+            if group.current_process and group.current_process.state is Process_Manager.RUNNING:
+                group.current_process.process(group.current_process)
+            elif group.default_process and group.default_process.state is Process_Manager.RUNNING:
+                group.default_process.process(group.default_process)
+
+        # Run single processes
         running_processes = {}
         
-        for process, process_data in self.processes.items():
+        for process, process_data in self.single_processes.items():
             if process_data.state is Process_Manager.RUNNING:
                 running_processes[process] = process_data
         
         for process, process_data in running_processes():
-            state = self._call_process(self, process)
-            if state is Process_Manager.FINISHED:
-                self.finish(process, False)
+            self._call_process(self, process)
         
     def in_queue(self, process):
         return process in self.processes
